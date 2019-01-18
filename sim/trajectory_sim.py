@@ -1,6 +1,7 @@
 from tkinter import *
 import copy
 import math
+import random
 import time
 import sys
 
@@ -48,8 +49,12 @@ def init(data):
     # so all angles in degrees so can increment/decrement easily
     data.arm0_theta0 = 0
     data.arm0_theta1 = 0
+    data.omega0 = 1 * DEG_TO_RAD / data.timerDelay
+    data.omega1 = 1 * DEG_TO_RAD / data.timerDelay
+    data.acc0 = 1 * DEG_TO_RAD / data.timerDelay
+    data.acc1 = 1 * DEG_TO_RAD / data.timerDelay
     data.goal0 = 45
-    data.goal1 = 0
+    data.goal1 = 45
     data.ball_x = data.ball_orig_x  # actual location of ball, center
     data.ball_y = data.ball_orig_y
     data.ball_goal_x = 0
@@ -67,13 +72,14 @@ def init(data):
 
 def timerFired(data):
     if data.move_ball:
-        if data.ball_x + data.ball_r > data.width:
+        if ((data.ball_x + data.ball_r + data.ball_vx > SC_WIDTH) or
+                data.ball_x - data.ball_r + data.ball_vx < 0):
             data.ball_vx *= -1  # bounce with opposite velocity
         else:
             data.ball_x += data.ball_vx
         if data.ball_y + data.ball_r > SC_HEIGHT:
-            data.ball_x = data.ball_origin_x
-            data.ball_y = data.ball_origin_y
+            data.ball_x = data.ball_orig_x  # actual location of ball, center
+            data.ball_y = data.ball_orig_y
             data.move_ball = False
         else:
             data.ball_y += data.ball_vy
@@ -113,19 +119,35 @@ def mousePressed(event, data):
     arm.y = util.transform(data.arm0_y, True, SC_HEIGHT)
     arm.num_links = NUM_LINKS
     arm.link_length = data.arm_length
+    arm.theta0 = data.arm0_theta0 * DEG_TO_RAD
+    arm.theta1 = data.arm0_theta1 * DEG_TO_RAD
+    arm.speed = 5
 
     # Note: to show linearized trajectory, modify the below function to also
     # return lin_trajectory
+    rand_prop = float(random.randint(90, 95))/ 100
     collision_info, deflections, joint_info = (
-            motion.predict_puck_motion(table, arm, puck_pose))
+            motion.predict_puck_motion(table, arm, puck_pose, 0.95))
 
     data.deflections = transform_deflections(deflections)
     data.collision_x = collision_info.x
     data.collision_y = util.transform(collision_info.y, True, SC_HEIGHT)
     data.time_to_collision = collision_info.time_to_collision
 
+    # maybe need some conversion ratio
+    data.omega0 = joint_info.omega0
+    data.omega1 = joint_info.omega1
+    data.acc0 = joint_info.acc0
+    data.acc1 = joint_info.acc1
+
+    print('omega0, omega1, acc0, acc1')
+    print(joint_info.omega0 / DEG_TO_RAD, joint_info.omega0 / DEG_TO_RAD,
+            joint_info.acc0 / DEG_TO_RAD, joint_info.acc1 / DEG_TO_RAD)
+
+
     data.goal0 = joint_info.joint0 / DEG_TO_RAD
     data.goal1 = joint_info.joint1 / DEG_TO_RAD
+
     data.reached_goal = False
 
 def draw_bounds(canvas, data):
@@ -275,9 +297,9 @@ def approx_vel(data):
     ang = math.atan2((data.ball_goal_y - data.ball_orig_y),
                      data.ball_goal_x - data.ball_orig_x)
 
-    data.ball_vx = data.ball_vel * math.cos(ang) * SEC_TO_MILLIS / data.timerDelay
+    data.ball_vx = data.ball_vel * math.cos(ang)
     # -1 to account for graphics inversion of coordinate frame
-    data.ball_vy = data.ball_vel * math.sin(ang) * SEC_TO_MILLIS / data.timerDelay
+    data.ball_vy = data.ball_vel * math.sin(ang)
 
 
 def transform_deflections(deflections):
@@ -298,7 +320,7 @@ def find_orig_deflect_intersect(data):
 
 def check_reached_goal(cur, goal):
     # error less than 1 deg is good enough
-    return abs(cur - goal) < 1
+    return abs(cur - goal) < 5
 
 
 def move_arm(data):
@@ -309,20 +331,16 @@ def move_arm(data):
     reached_goal0 = check_reached_goal(data.arm0_theta0, data.goal0)
     reached_goal1 = check_reached_goal(data.arm0_theta1, data.goal1)
     if not reached_goal0:
-        if (data.arm0_theta0 > data.goal0):
-            data.arm0_theta0 -= 1
-        elif (data.arm0_theta0 < data.goal0):
-            data.arm0_theta0 += 1
+        data.omega0 += data.acc0
+        data.arm0_theta0 += data.omega0 / DEG_TO_RAD
 
     # joint1
     if not reached_goal1:
-        if (data.arm0_theta1 > data.goal1):
-            data.arm0_theta1 -= 1
-        elif (data.arm0_theta1 < data.goal1):
-            data.arm0_theta1 += 1
+        data.omega1 += data.acc1
+        data.arm0_theta1 += data.omega1 / DEG_TO_RAD
 
     # finally reached goal when both joints have reached their goal angles
     data.reached_goal = reached_goal0 and reached_goal1
 
 
-run(SC_WIDTH*2, SC_HEIGHT*2)
+run(SC_WIDTH, SC_HEIGHT*2)

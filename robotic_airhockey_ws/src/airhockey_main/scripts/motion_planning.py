@@ -5,7 +5,7 @@ import numpy as np
 import utilities as util
 
 
-def predict_puck_motion(table, arm, puck_pose):
+def predict_puck_motion(table, arm, puck_pose, radius_prop=0.95):
     """
     This is the main function that will be called by the raspberry pi
     constantly. The raspberry pi will call computer vision scripts to return the
@@ -23,6 +23,8 @@ def predict_puck_motion(table, arm, puck_pose):
     :type: Struct that contains:
         x: base x of arm
         y: base y of arm
+        theta0: base angle
+        theta1: 2nd angle
         link_length: length of one link(two links for our 2DOF robot arm)
         num_links: number of links for one arm (in our case 2)
 
@@ -40,20 +42,30 @@ def predict_puck_motion(table, arm, puck_pose):
     transformed_pose.y = util.transform(transformed_pose.y, True, table.length)
     transformed_pose.vy = util.transform(transformed_pose.vy, False)
 
-    deflections = find_deflections(table, arm, transformed_pose, [])
+    deflections = find_deflections(table, arm, transformed_pose,
+            radius_prop, [])
 
     lin_trajectory = linearize_trajectory(puck_pose, deflections)
 
-    collision_info = vector_circle_intersect(arm, lin_trajectory)
+    collision_info = vector_circle_intersect(arm, lin_trajectory, radius_prop)
 
-    joint_info = util.Struct()
+    goal_joints = util.Struct()
     joint0, joint1 = calc_joints_from_pos(arm.link_length,
                         collision_info.x - arm.x,
                         (collision_info.y - arm.y))
-    joint_info.joint0 = joint0
-    joint_info.joint1 = joint1
+    goal_joints.joint0 = joint0
+    goal_joints.joint1 = joint1
 
-    return collision_info, deflections, joint_info
+    # NOTE: Passing in global collision location, not relative to base of arm
+    omega0, omega1, acc0, acc1 = (
+            calc_goal_joint_pose(arm, table, goal_joints, collision_info))
+
+    goal_joints.omega0 = omega0
+    goal_joints.omega1 = omega1
+    goal_joints.acc0 = acc0
+    goal_joints.acc1 = acc1
+
+    return collision_info, deflections, goal_joints
 
 
 def calc_joints_from_pos(arm_L, goal_x, goal_y):
@@ -61,14 +73,19 @@ def calc_joints_from_pos(arm_L, goal_x, goal_y):
     Geometric solution to 2-DOF robot arm inverse kinematics.
     NOTE: goal_x and goal_y must be definied WITH RESPECT TO BASE OF ARM, so
     provide something like (arm_L, goal_x - base_x, goal_y - base_y)
+
     :param arm_L: length of robot arm (in our case, both links same length)
     :type: float
+
     :param goal_x: target x-position of end_effector
     :type: float
+
     :param goal_y: target y-position
     :type: float
+
     :returns (theta0, theta1): two joint angles required for goal position
     :type: tuple(float, float)
+
     """
     # while desired x, y is out of reach of arm
     # check if hypotenuse of triangle formed by x and y is > combined arm length
@@ -89,34 +106,48 @@ def calc_joints_from_pos(arm_L, goal_x, goal_y):
     return (theta0, theta1)
 
 
-def vector_circle_intersect(arm, p):
+def vector_circle_intersect(arm, p, radius_prop):
     """
     Finds intersection location (x, y) as well as time between incoming
     puck and perimeter of arm's max reach. Derviation shown on project page.
     Use a try-except block for both arms, pick the first one that has a valid
     solution.
 
-    :param arm_L
+    :param arm:
+    :type: Struct that contains:
+        x: base x of arm
+        y: base y of arm
+        theta0: base angle
+        theta1: 2nd angle
+        link_length: length of one link(two links for our 2DOF robot arm)
+        num_links: number of links for one arm (in our case 2)
+
+    :param p:
+    :type: Struct:
+        x: center x of puck
+        y: center y of puck
+        vx: velocity x-component of puck
+        vy: velocity y-component of puck
+
+    :param radius_prop: serves to prevent the second angle of the robot
+    arm from ever reaching 0 (hence straight arm) since this can cause
+    mechanical strain as well as cause singularities for the inversion of the
+    jacobian. Must be between 0 and 1.
     :type: float
 
-    :param base_x: x position of base of arm
-    :type: float
-
-    :param base_y: y position of base of arm
-    :type: float
-
-    :param p: puck position and velocity information
-    :type: Struct()
-
-    :returns goal_x, goal_y: next goal location for arm
-    :type: float
+    :returns collision_info
+    :type: Struct:
+        x: x location of collision of arm with puck
+        y: y location of collision of arm with puck
+        t: time until collision
 
     :returns time_to_collision (milliseconds)
     :type: float
+
     """
     error_str = "Couldn't calculate new goal position for arm"
     # Quadratic formula
-    arm_L = arm.link_length * arm.num_links
+    arm_L = arm.link_length * arm.num_links * radius_prop
     a = (p.vx)**2 + (p.vy)**2
     b = ((2 * p.x * p.vx) - (2 * p.vx * arm.x) +
          (2 * p.y * p.vy) - (2 * p.vy * arm.y))
@@ -145,51 +176,58 @@ def vector_circle_intersect(arm, p):
     return collision_info
 
 
-def calc_goal_joint_pose(arm_L, arm_speed, table_L,
-                         theta0, theta1, goal_x, goal_y):
+def calc_goal_joint_pose(arm, table, goal_joints, goal_loc):
     """
     Calculates the desired velocity of arm when it reaches the goal position.
     Also calculates angular accelerations for both joints for them to reach
     end position at desired angle.
-    :param arm_L: length of one link
+
+    :param arm: contain info on arm length, theta's, base x and y
     :type: float
+
     :param table_L: length of table
     :type: float
+
     :param goal_x, goal_y: goal x, y position of end effector
     :type: float
+
     """
-    theta_g = math.atan2(L - goal_y, goal_x)
+    # Overall angle of velocity, not joint angles
+    assert(table.length > goal_loc.y)
+    theta_g = math.atan2(table.length - goal_loc.y, table.width/2 - goal_loc.x)
     arm_vel_g = np.array([
-        [arm_speed * math.cos(theta_g)],
-        [arm_speed * math.sin(theta_g)]
+        [arm.speed * math.cos(theta_g)],
+        [arm.speed * math.sin(theta_g)]
     ])
-    theta0_g, theta1_g = calc_joints_from_pos(arm_L, goal_x, goal_y)
 
     # determine angular velocity of joints
+     # determine angular velocity of joints
     jacobian = np.array([
-        [-arm_L * math.sin(theta1) - arm_L * math.sin(theta0 + theta1),
-         -arm_L * math.sin(theta0 + theta1)],
-        [arm_L * math.cos(theta1) + arm_L * math.cos(theta0 + theta1),
-         arm_L * math.cos(theta0 + theta1)]
+        [-arm.link_length * math.sin(arm.theta0) -
+            arm.link_length * math.sin(arm.theta0 + arm.theta1),
+         -arm.link_length * math.sin(arm.theta0 + arm.theta1)],
+        [arm.link_length * math.cos(arm.theta0) +
+            arm.link_length * math.cos(arm.theta0 +arm.theta1),
+         arm.link_length * math.cos(arm.theta0 + arm.theta1)]
     ])
-    inv_jacobian = np.linalg.inv(jacobian)
-    omega = np.matmul(inv_jacobian, arm_vel_g)
-    del_theta0 = theta0_g - theta0
-    del_theta1 = theta1_g - theta1
+
+    # maybe compute this from scratch
+    try:
+        inv_jacobian = np.linalg.inv(jacobian)
+        omega = np.matmul(inv_jacobian, arm_vel_g)
+    except:
+        J_T = np.transpose(jacobian)
+        cov = np.linalg.inv(np.matmul(J_T, jacobian))
+        omega = np.matmul(np.matmul(cov, J_T), arm_vel_g)
+
+    del_theta0 = goal_joints.joint0 - arm.theta0
+    del_theta1 = goal_joints.joint1 - arm.theta1
     alpha0 = omega[0]**2 / (2 * del_theta0)
     alpha1 = omega[1]**2 / (2 * del_theta1)
-
-
-    # HAVE SOME WHILE LOOP THAT CONSTANTLY BRINGS COLLISION POINT CLOSER
-    # UNTIL DESIRED OMEGA AND ALPHA ARE WITHIN LIMITS OF MOTORS B/C
-    # IF TRY TO SET TOO HIGH VEL OR ACC, ARM WILL JUST MISS PUCK
-
-
     return omega[0], omega[1], alpha0, alpha1
 
 
-def find_deflections(table, arm,
-                    puck_pose, deflections=[]):
+def find_deflections(table, arm, puck_pose, radius_prop, deflections=[]):
     """
     Calculates the full trajectory of a puck including all its different
     deflections from wall sides. NOTE: modifies the puck_pose, so need to
@@ -231,7 +269,7 @@ def find_deflections(table, arm,
     if len(deflections) > 0: prev_time = deflections[-1][4]
     else: prev_time = 0
     try:
-        collision = vector_circle_intersect(arm, puck_pose)
+        collision = vector_circle_intersect(arm, puck_pose, radius_prop)
         deflections.append([collision.x, collision.y,
                             puck_pose.vx, puck_pose.vy,
                             prev_time + collision.time_to_collision])
@@ -241,7 +279,7 @@ def find_deflections(table, arm,
         deflections.append([p_copy.x, p_copy.y,
                         p_copy.vx, p_copy.vy,
                         prev_time + time_deflection])
-        return find_deflections(table, arm, p_copy, deflections)
+        return find_deflections(table, arm, p_copy, radius_prop, deflections)
 
 
 def linearize_trajectory(puck_pose, deflections):
