@@ -52,29 +52,3 @@ class Puck(object):
             #displays all windows
             # cv2.imshow('Input', self.frame)
             cv2.imshow("Puck", res)
-
-
-def track_table(PuckTracker, cap):
-    _, frame = cap.read()
-    #frame = cv.imread("./table3.jpg")
-    cv.circle(frame, (203, 104), 5, (0, 0, 255), -1)
-    cv.circle(frame, (479, 90), 5, (0,  0, 255), -1)
-    cv.circle(frame, (527, 466), 5, (0, 0, 255), -1)
-    cv.circle(frame, (180, 480), 5, (0, 0, 255), -1)
-
-    pts1 = np.float32([[203, 104], [479, 90], [527, 466], [180, 480]])
-    pts2 = np.float32([[0, 380], [0, 0], [460, 0], [460, 380]])
-    matrix = cv.getPerspectiveTransform(pts1, pts2)
-
-    result = cv.warpPerspective(frame, matrix, (460, 360))
-
-    # cv.imshow("Frame", frame)
-    # cv.imshow("Perspective transformation", result)
-
-    PuckTracker.frame = result
-    PuckTracker.track()
-    key = cv.waitKey(1)
-    if key == 27:
-        return
-
-    return PuckTracker

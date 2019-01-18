@@ -8,6 +8,11 @@ import sys
 import utilities as util
 import motion_planning as motion  # actual functions driving robot movement
 
+import rospy
+from airhockey_main.msg import ArmAngles
+from airhockey_main_script import publish_arm_data
+
+
 # Credit to the 15-112 Course at Carnegie Mellon University for providing
 # example graphics functions with tkinter
 # Link: https://www.cs.cmu.edu/~112/notes/notes-animations-part2.html
@@ -143,7 +148,6 @@ def mousePressed(event, data):
 
     data.goal0 = joint_info.joint0 / DEG_TO_RAD
     data.goal1 = joint_info.joint1 / DEG_TO_RAD
-
     data.reached_goal = False
 
 def draw_bounds(canvas, data):
