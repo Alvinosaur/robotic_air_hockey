@@ -1,5 +1,6 @@
 .DS_Store
 .DS_Store?
+*.pyc
 robotic_airhockey_ws/devel/
 robotic_airhockey_ws/build/
 sim/__pycache__/
