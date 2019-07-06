@@ -13,76 +13,105 @@ import motion_planning as motion  # actual functions driving robot movement
 # Link: https://www.cs.cmu.edu/~112/notes/notes-animations-part2.html
 # this script demonstrates the correct determination of puck velocity vector
 # intersection with bounds of robot arm
-
+LINK_LENGTH = 6 / float(36) # 6 inches to meters
+MAX_ARM_SPEED = 0.5  # m/s
+BALL_VEL = .75  # m/s
+TIME_DELAY = 2
+TIME_UPDATE_SCALE = float(40)
+M_TO_PIX = float(300)  # meters to pixels
 NUM_LINKS = 2
 SEC_TO_MILLIS = float(1)/1000
-DEG_TO_RAD = math.pi/180
+DEG_TO_RAD = math.pi / 180
+RAD_TO_DEG = 1 / DEG_TO_RAD
 SC_WIDTH = 200
 SC_HEIGHT = 400
+# store table info in meters
+table = util.Struct()
+table.width = SC_WIDTH / M_TO_PIX
+table.length = SC_HEIGHT / M_TO_PIX
 EXTENT_CHECK = float(3)/4  # note: reversed for graphics, -> 1 means closer to arms
+DEBUG = True
 root = Tk()
 
+"""All angles running the simulator are in degrees for easy decrement/increment.
 
-## Drawing ##
-def init(data):
-    # CONSTANTS
+Coordinate Frame of Simulator:
+                    __________X
+                    |
+                    |
+                    |
+                  Y |
+
+Coordinate Frame of Calculations:
+                  Y |
+                    |
+                    |
+                    |_________X
+
+Returns:
+    [type] -- [description]
+"""
+
+def initBall(data):
+    # ball starts at top-center of screen by default
+    data.ball_orig_x = SC_WIDTH/2
+    data.ball_orig_y = 10
+    data.ball_vel = BALL_VEL * M_TO_PIX
+    data.ball_r = 10  
+    data.ball_x = data.ball_orig_x
+    data.ball_y = data.ball_orig_y
+    data.ball_goal_x, data.ball_goal_y = data.ball_x, data.ball_y
+    data.ball_vx, data.ball_vy = 0, 0
+    data.ball_color = "yellow"
+
+
+def initArm(data):
     # arm starts at bottom center of screen, perspective of robot
-    # note in graphics, y must decrease for arm to point upwards
     data.arm0_x = SC_WIDTH/2
     data.arm0_y = SC_HEIGHT
-    data.ball_r = 10
+    data.arm_length = LINK_LENGTH * M_TO_PIX
+    data.arm0_theta0, data.arm0_theta1 = 45, 135  # base and 2nd link angle
+    data.omega0, data.omega1 = 0, 0  # base and 2nd link angular vel
+    data.acc0, data.acc1 = 0, 0  # base and 2nd link angular acc
+    data.goal0, data.goal1 = 45, 45  # initial
+    data.collision_x, data.collision_y = 0, 0
+    data.pred_x, data.pred_y = 0, 0
+    data.pred_vx, data.pred_vy = 0, 0
+    data.arm_color = "red"
+
+
+def init(data):
+    initBall(data)
+    initArm(data)
+    # Drawing Constants
     data.dot_r = 1
-    data.ball_orig_x = SC_WIDTH/2  # starting position of ball
-    data.ball_orig_y = data.ball_r
-    data.ball_vel = 5
-    data.arm_length = 50
     data.line_width = 5
     data.timerDelay = 25  # 25ms delay between each updated frame
-    data.arm_color = "red"
-    data.ball_color = "yellow"
     data.dot_color = "green"
     data.real_arm_bounds_color = "orange"
     data.deflect_traj_color = "purple"
     data.bound_color = "black"
 
-    # VARIABLES
-    # so all angles in degrees so can increment/decrement easily
-    data.arm0_theta0 = 0
-    data.arm0_theta1 = 0
-    data.omega0 = 1 * DEG_TO_RAD / data.timerDelay
-    data.omega1 = 1 * DEG_TO_RAD / data.timerDelay
-    data.acc0 = 1 * DEG_TO_RAD / data.timerDelay
-    data.acc1 = 1 * DEG_TO_RAD / data.timerDelay
-    data.goal0 = 45
-    data.goal1 = 45
-    data.ball_x = data.ball_orig_x  # actual location of ball, center
-    data.ball_y = data.ball_orig_y
-    data.ball_goal_x = 0
-    data.ball_goal_y = 0
-    approx_vel(data)  # modifies data.ball_vx, data.ball_vy
-    data.collision_x, data.collision_y = 0, 0
-    data.pred_x, data.pred_y = 0, 0
-    data.pred_vx, data.pred_vy = 0, 0
-    data.reach_bound = 0
+    # Dynamic Variables
     data.time_to_collision = 0
-    data.reached_goal = False
+    data.reached_goal = True
     data.move_ball = False
     data.deflections = []
 
 
 def timerFired(data):
     if data.move_ball:
-        if ((data.ball_x + data.ball_r + data.ball_vx > SC_WIDTH) or
-                data.ball_x - data.ball_r + data.ball_vx < 0):
+        if ((data.ball_x + data.ball_r > SC_WIDTH) or
+                data.ball_x - data.ball_r < 0):
             data.ball_vx *= -1  # bounce with opposite velocity
-        else:
-            data.ball_x += data.ball_vx
+            if len(data.deflections) > 0: data.deflections.pop()
         if data.ball_y + data.ball_r > SC_HEIGHT:
             data.ball_x = data.ball_orig_x  # actual location of ball, center
             data.ball_y = data.ball_orig_y
             data.move_ball = False
-        else:
-            data.ball_y += data.ball_vy
+        data.ball_y += data.ball_vy / TIME_UPDATE_SCALE
+        data.ball_x += data.ball_vx / TIME_UPDATE_SCALE
+
     if not data.reached_goal:
         move_arm(data)
 
@@ -92,59 +121,74 @@ def keyPressed(event, data):
     if (event.char == 'q') or (event.char == 'Q'):
         root.destroy()
         sys.exit()
-    elif (event.char == 'l') or (event.char == 'L'):
+    elif (event.char == 'p') or (event.char == 'P'):
         data.move_ball = not data.move_ball
 
 
-def mousePressed(event, data):
-    data.ball_goal_x = event.x
-    data.ball_goal_y = event.y
-    approx_vel(data)
-
-    # un-transformed data
+def get_puck_world_frame(data):
+    # store puck pose in global frame
     puck_pose = util.Struct()
-    puck_pose.x = data.ball_x
-    puck_pose.y = data.ball_y
-    puck_pose.vx = data.ball_vx
-    puck_pose.vy = data.ball_vy
+    puck_pose.x = data.ball_x / M_TO_PIX
+    puck_pose.y = util.transform(data.ball_y, True, SC_HEIGHT) / M_TO_PIX
+    puck_pose.vx = data.ball_vx / M_TO_PIX
+    puck_pose.vy = util.transform(data.ball_vy, False) / M_TO_PIX
+    if DEBUG: 
+        print('[DEBUG] Puck x, y, vx, vy: %.2f, %.2f, %.2f, %.2f' % (
+            puck_pose.x, puck_pose.y, puck_pose.vx, puck_pose.vy))
+    return puck_pose
 
-    # store table info
-    table = util.Struct()
-    table.width = SC_WIDTH
-    table.length = SC_HEIGHT
 
-    # store arm info
+def get_arm_world_frame(data):
+    # store arm info in global frame
     arm = util.Struct()
-    arm.x = data.arm0_x
-    arm.y = util.transform(data.arm0_y, True, SC_HEIGHT)
+    arm.x = data.arm0_x / M_TO_PIX
+    arm.y = util.transform(data.arm0_y, True, SC_HEIGHT) / M_TO_PIX
     arm.num_links = NUM_LINKS
-    arm.link_length = data.arm_length
+    arm.link_length = data.arm_length / M_TO_PIX
     arm.theta0 = data.arm0_theta0 * DEG_TO_RAD
     arm.theta1 = data.arm0_theta1 * DEG_TO_RAD
-    arm.speed = 5
+    arm.speed = MAX_ARM_SPEED
+    if DEBUG: 
+        print('[DEBUG] Arm x, y, Angle 0, Angle 1: %.2f, %.2f, %.2f, %.2f' % (
+            arm.x, arm.y, arm.theta0, arm.theta1))
+    return arm
+
+
+def mousePressed(event, data):
+    # If ball not already moving
+    if not data.move_ball:
+        data.move_ball = True
+        approx_vel(data, event.x, event.y)
+
+    puck_pose = get_puck_world_frame(data)
+    arm = get_arm_world_frame(data)
 
     # Note: to show linearized trajectory, modify the below function to also
     # return lin_trajectory
-    rand_prop = float(random.randint(90, 95))/ 100
     collision_info, deflections, joint_info = (
             motion.predict_puck_motion(table, arm, puck_pose, 0.95))
 
+    # reverse so can pop off deflections in chronological order O(1)
     data.deflections = transform_deflections(deflections)
-    data.collision_x = collision_info.x
-    data.collision_y = util.transform(collision_info.y, True, SC_HEIGHT)
-    data.time_to_collision = collision_info.time_to_collision
+    data.deflections.reverse()
+    data.collision_x = collision_info.x * M_TO_PIX
+    data.collision_y = util.transform(collision_info.y * M_TO_PIX, 
+                                    True, SC_HEIGHT)
+    data.time_to_collision = collision_info.time_to_collision * TIME_DELAY
+    if DEBUG:
+        print('[DEBUG] Collision x, y, t: %.2f, %.2f, %.2f' % (
+            data.collision_x, data.collision_y, data.time_to_collision))
 
-    # maybe need some conversion ratio
-    data.omega0 = joint_info.omega0
-    data.omega1 = joint_info.omega1
-    data.acc0 = joint_info.acc0
-    data.acc1 = joint_info.acc1
+    data.omega0 = joint_info.omega0 * RAD_TO_DEG
+    data.omega1 = joint_info.omega1 * RAD_TO_DEG
+    data.acc0 = joint_info.acc0 * RAD_TO_DEG
+    data.acc1 = joint_info.acc1 * RAD_TO_DEG
 
 
-    data.goal0 = joint_info.joint0 / DEG_TO_RAD
-    data.goal1 = joint_info.joint1 / DEG_TO_RAD
+    data.goal0 = (joint_info.joint0 * RAD_TO_DEG) % 360
+    data.goal1 = (joint_info.joint1 * RAD_TO_DEG) % 360
 
-    data.reached_goal = False
+    # data.reached_goal = False
 
 def draw_bounds(canvas, data):
     canvas.create_line(SC_WIDTH, 0, SC_WIDTH, SC_HEIGHT,
@@ -286,21 +330,30 @@ def run(width=300, height=300):
 
 
 ## Logic and Calculations ##
-def approx_vel(data):
-    dist = ((data.ball_goal_x - data.ball_orig_x)**2 +
-            (data.ball_goal_y - data.ball_orig_y)**2)**0.5
-    # mult by -1 to account for graphics coordinate frame
-    ang = math.atan2((data.ball_goal_y - data.ball_orig_y),
-                     data.ball_goal_x - data.ball_orig_x)
+def approx_vel(data, x_g, y_g):
+    ang = math.atan2((y_g - data.ball_orig_y),
+                     x_g - data.ball_orig_x)
 
+    print(ang)
     data.ball_vx = data.ball_vel * math.cos(ang)
     # -1 to account for graphics inversion of coordinate frame
     data.ball_vy = data.ball_vel * math.sin(ang)
 
 
 def transform_deflections(deflections):
+    """Transform global frame coordinates in meters to simulation frame in 
+    pixels.
+    
+    Arguments:
+        deflections {List} -- list of x, y coordinates of puck collisions with 
+        wall.
+    
+    Returns:
+        List -- transformed deflections list, destructively modified.
+    """
     for deflect in deflections:
-        deflect[1] = util.transform(deflect[1], True, SC_HEIGHT)
+        deflect[0] *= M_TO_PIX
+        deflect[1] = util.transform(deflect[1] * M_TO_PIX, True, SC_HEIGHT)
     return deflections
 
 
@@ -327,13 +380,13 @@ def move_arm(data):
     reached_goal0 = check_reached_goal(data.arm0_theta0, data.goal0)
     reached_goal1 = check_reached_goal(data.arm0_theta1, data.goal1)
     if not reached_goal0:
-        data.omega0 += data.acc0
-        data.arm0_theta0 += data.omega0 / DEG_TO_RAD
+        data.omega0 += data.acc0 / TIME_UPDATE_SCALE
+        data.arm0_theta0 += data.omega0 / TIME_UPDATE_SCALE
 
     # joint1
     if not reached_goal1:
-        data.omega1 += data.acc1
-        data.arm0_theta1 += data.omega1 / DEG_TO_RAD
+        data.omega1 += data.acc1 / TIME_UPDATE_SCALE
+        data.arm0_theta1 += data.omega1 * RAD_TO_DEG / TIME_UPDATE_SCALE
 
     # finally reached goal when both joints have reached their goal angles
     data.reached_goal = reached_goal0 and reached_goal1

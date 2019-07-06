@@ -4,6 +4,8 @@ import numpy as np
 
 import utilities as util
 
+MIN_V = .01  # m/s, or 1cm/s
+
 
 def predict_puck_motion(table, arm, puck_pose, radius_prop=0.95):
     """
@@ -24,7 +26,7 @@ def predict_puck_motion(table, arm, puck_pose, radius_prop=0.95):
         x: base x of arm
         y: base y of arm
         theta0: base angle
-        theta1: 2nd angle
+        theta1: 2nd angle defined wrt base arm link
         link_length: length of one link(two links for our 2DOF robot arm)
         num_links: number of links for one arm (in our case 2)
 
@@ -38,11 +40,7 @@ def predict_puck_motion(table, arm, puck_pose, radius_prop=0.95):
     :returns:
     """
     # note: graphics frame v.s real-world frame flipped on y-axis
-    transformed_pose = copy.deepcopy(puck_pose)
-    transformed_pose.y = util.transform(transformed_pose.y, True, table.length)
-    transformed_pose.vy = util.transform(transformed_pose.vy, False)
-
-    deflections = find_deflections(table, arm, transformed_pose,
+    deflections = find_deflections(table, arm, puck_pose,
             radius_prop, [])
 
     lin_trajectory = linearize_trajectory(puck_pose, deflections)
@@ -243,10 +241,12 @@ def find_deflections(table, arm, puck_pose, radius_prop, deflections=[]):
     deflection
     """
     p_copy = copy.deepcopy(puck_pose)
+    print(p_copy.x)
     reach_radius = arm.link_length * arm.num_links
     assert(0 <= p_copy.x <= table.width)
-    # (vx == 0) implies puck moving straight down, no wall deflections
-    if p_copy.vx == 0:  # avoid division by zero error first
+    # (vx < MIN_V) implies puck moving straight down, no wall deflections
+    # (vy < MIN_V) implies puck moving too slowly
+    if abs(p_copy.vx) < MIN_V or abs(p_copy.vy) < MIN_V:  
         return deflections
     elif p_copy.vx > 0:  # moving right
         assert(table.width > p_copy.x)
