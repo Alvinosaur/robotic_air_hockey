@@ -20,11 +20,14 @@ TIME_DELAY = 2
 TIME_UPDATE_SCALE = float(40)
 M_TO_PIX = float(300)  # meters to pixels
 NUM_LINKS = 2
+HOME_0 = 45
+HOME_1 = 150
 SEC_TO_MILLIS = float(1)/1000
 DEG_TO_RAD = math.pi / 180
 RAD_TO_DEG = 1 / DEG_TO_RAD
 SC_WIDTH = 200
 SC_HEIGHT = 400
+
 # store table info in meters
 table = util.Struct()
 table.width = SC_WIDTH / M_TO_PIX
@@ -95,6 +98,7 @@ def init(data):
     # Dynamic Variables
     data.time_to_collision = 0
     data.reached_goal = True
+    data.return_home = False
     data.move_ball = False
     data.deflections = []
 
@@ -184,11 +188,10 @@ def mousePressed(event, data):
     data.acc0 = joint_info.acc0 * RAD_TO_DEG
     data.acc1 = joint_info.acc1 * RAD_TO_DEG
 
-
     data.goal0 = (joint_info.joint0 * RAD_TO_DEG) % 360
     data.goal1 = (joint_info.joint1 * RAD_TO_DEG) % 360
 
-    # data.reached_goal = False
+    data.reached_goal = False
 
 def draw_bounds(canvas, data):
     canvas.create_line(SC_WIDTH, 0, SC_WIDTH, SC_HEIGHT,
@@ -252,13 +255,13 @@ def draw_trajectory(canvas, data):
                            fill=data.deflect_traj_color, width=data.line_width)
     else:
         # Draw first deflection trajectory from puck position to collision
-        first_collision = data.deflections[0]
+        first_collision = data.deflections[-1]
         canvas.create_line(data.ball_x, data.ball_y,
                            first_collision[0], first_collision[1],
                            fill=data.deflect_traj_color, width=data.line_width)
 
         # Draw last deflection trajectory from last
-        last_deflection = data.deflections[-1]
+        last_deflection = data.deflections[0]
         canvas.create_line(last_deflection[0], last_deflection[1],
                            data.collision_x, data.collision_y,
                            fill=data.deflect_traj_color, width=data.line_width)
@@ -379,6 +382,9 @@ def move_arm(data):
     # joint0
     reached_goal0 = check_reached_goal(data.arm0_theta0, data.goal0)
     reached_goal1 = check_reached_goal(data.arm0_theta1, data.goal1)
+    if DEBUG:
+        print('[DEBUG] Joint 0 real, goal, omeg, acc: %.2f, %.2f, %.2f, %.2f' %     (data.arm0_theta0, data.goal0, data.omega0, data.acc0))
+        print('[DEBUG] Joint 1 real, goal, omeg, acc: %.2f, %.2f, %.2f, %.2f' %     (data.arm0_theta1, data.goal1, data.omega1, data.acc1))
     if not reached_goal0:
         data.omega0 += data.acc0 / TIME_UPDATE_SCALE
         data.arm0_theta0 += data.omega0 / TIME_UPDATE_SCALE
@@ -386,10 +392,17 @@ def move_arm(data):
     # joint1
     if not reached_goal1:
         data.omega1 += data.acc1 / TIME_UPDATE_SCALE
-        data.arm0_theta1 += data.omega1 * RAD_TO_DEG / TIME_UPDATE_SCALE
+        data.arm0_theta1 += data.omega1 / TIME_UPDATE_SCALE
 
     # finally reached goal when both joints have reached their goal angles
-    data.reached_goal = reached_goal0 and reached_goal1
+    if reached_goal0 and reached_goal1:
+        if data.return_home:  # if reached goal home position, done
+            data.reached_goal = True
+            data.return_home = False
+        else:
+            data.return_home = True
+            data.goal0 = HOME_0
+            data.goal1 = HOME_1
 
 
 run(SC_WIDTH, SC_HEIGHT*2)
