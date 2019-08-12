@@ -68,7 +68,9 @@ def predict_puck_motion(table, arm, puck_pose, radius_prop=0.95):
 
 def calc_joints_from_pos(arm_L, goal_x, goal_y):
     """
-    Geometric solution to 2-DOF robot arm inverse kinematics.
+    Geometric solution to 2-DOF robot arm inverse kinematics. 
+    Requires goal_y >= 0 and will always provide theta0 in bound [0, pi]
+    to prevent arm from colliding with behind table edge.
     NOTE: goal_x and goal_y must be definied WITH RESPECT TO BASE OF ARM, so
     provide something like (arm_L, goal_x - base_x, goal_y - base_y)
 
@@ -100,7 +102,12 @@ def calc_joints_from_pos(arm_L, goal_x, goal_y):
     theta0 = math.atan2(goal_y, goal_x) - (
                 math.atan2(arm_L*math.sin(theta1),
                            arm_L + arm_L*math.cos(theta1)))
-    # simply invert conversion to get radians to degree
+    if not (0 <= theta0 and theta0 <= math.pi):
+        theta1 *= -1
+        theta0 = math.atan2(goal_y, goal_x) - (
+                math.atan2(arm_L*math.sin(theta1),
+                           arm_L + arm_L*math.cos(theta1)))
+    assert(0 <= theta0 and theta0 <= math.pi)
     return (theta0, theta1)
 
 
@@ -174,7 +181,7 @@ def vector_circle_intersect(arm, p, radius_prop):
     return collision_info
 
 
-def calc_goal_joint_pose(arm, table, goal_joints, goal_loc):
+def vector_circle_intersect(arm, table, goal_joints, goal_loc):
     """
     Calculates the desired velocity of arm when it reaches the goal position.
     Also calculates angular accelerations for both joints for them to reach
