@@ -168,7 +168,7 @@ def vector_circle_intersect(arm, p, radius_prop):
         goal_x = p.x + p.vx * time_to_collision
         goal_y = p.y + p.vy * time_to_collision
 
-    if not (goal_x >= 0 and goal_y >= 0 and time_to_collision >= 0):
+    if not (goal_y >= 0 and time_to_collision >= 0):
         raise util.NoSolutionError(error_str)
 
     # double-check that goal is within reach of arm
@@ -181,7 +181,7 @@ def vector_circle_intersect(arm, p, radius_prop):
     return collision_info
 
 
-def vector_circle_intersect(arm, table, goal_joints, goal_loc):
+def calc_goal_joint_pose(arm, table, goal_joints, goal_loc):
     """
     Calculates the desired velocity of arm when it reaches the goal position.
     Also calculates angular accelerations for both joints for them to reach
@@ -237,7 +237,8 @@ def find_deflections(table, arm, puck_pose, radius_prop, deflections=[]):
     Calculates the full trajectory of a puck including all its different
     deflections from wall sides. NOTE: modifies the puck_pose, so need to
     pass in a deep copy at the start. NOTE: requires the cartesian coordinate
-    frame, so need to transform graphics coordinates to cartesian.
+    frame, so need to transform graphics coordinates to cartesian. Last 
+    'deflection' is intersection with radius of arm.
     Cases:
         - puck bounces off wall like normal
         - puck never bounces off wall before reaching arm
@@ -248,41 +249,36 @@ def find_deflections(table, arm, puck_pose, radius_prop, deflections=[]):
     deflection
     """
     p_copy = copy.deepcopy(puck_pose)
-    print(p_copy.x)
+    assert(0 <= p_copy.x <= table.width) 
     reach_radius = arm.link_length * arm.num_links
-    assert(0 <= p_copy.x <= table.width)
+    dist_from_base = util.distance(arm.x, arm.y, p_copy.x, p_copy.y)
+    if dist_from_base <= reach_radius:
+        return deflections
     # (vx < MIN_V) implies puck moving straight down, no wall deflections
     # (vy < MIN_V) implies puck moving too slowly
     if abs(p_copy.vx) < MIN_V or abs(p_copy.vy) < MIN_V:  
         return deflections
-    elif p_copy.vx > 0:  # moving right
-        assert(table.width > p_copy.x)
-        time_deflection = (table.width - p_copy.x) / p_copy.vx
-        p_copy.x = table.width  # next x position right after deflection
-    else:  #   moving left
-        time_deflection = (0 - p_copy.x) / p_copy.vx
-        p_copy.x = 0
-    p_copy.vx *= -1
-    assert(time_deflection > 0)
-    p_copy.y = p_copy.y + p_copy.vy * time_deflection
 
-    # angle too shallow, will never collide with wall before reaching arm
-    if p_copy.y < arm.y:
-        return deflections
-    dist_from_base = util.distance(arm.x, arm.y, p_copy.x, p_copy.y)
-    # no need to transform or keep, previous pose will lead puck to arms
-    if dist_from_base <= reach_radius:
-        return deflections
     if len(deflections) > 0: prev_time = deflections[-1][4]
     else: prev_time = 0
+
     try:
         collision = vector_circle_intersect(arm, puck_pose, radius_prop)
         deflections.append([collision.x, collision.y,
                             puck_pose.vx, puck_pose.vy,
                             prev_time + collision.time_to_collision])
         return deflections
+    
     except util.NoSolutionError:
-        # -1 to account for collided puck, simply have puck move in opposite dir
+        if p_copy.vx > 0:  # moving right
+            time_deflection = (table.width - p_copy.x) / p_copy.vx
+            p_copy.x = table.width  # next x position right after deflection
+        else:  # moving left
+            time_deflection = (0 - p_copy.x) / p_copy.vx
+            p_copy.x = 0
+
+        p_copy.vx *= -1
+        p_copy.y = p_copy.y + p_copy.vy * time_deflection
         deflections.append([p_copy.x, p_copy.y,
                         p_copy.vx, p_copy.vy,
                         prev_time + time_deflection])
