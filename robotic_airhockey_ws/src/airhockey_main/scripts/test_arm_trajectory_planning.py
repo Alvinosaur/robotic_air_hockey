@@ -97,7 +97,7 @@ def test_find_deflections():
     puck.vy = -1
 
     deflections = m.find_deflections(table, arm, puck,
-            radius_prop, [])
+            radius_prop)
     assert(deflections == [
         # [x, y, vx, vy, t]
         [2, 8, -1, -1, 2],
@@ -113,7 +113,7 @@ def test_find_deflections():
     puck.vy = -2.5
     # puck starts off immediately colliding with table
     deflections = m.find_deflections(table, arm, puck,
-            radius_prop, [])
+            radius_prop)
     assert(deflections[:2] == [
         # [x, y, vx, vy, t]
         [2, 6, -1, -2.5, 0],  # immediately collide
@@ -128,7 +128,7 @@ def test_find_deflections():
     puck.vy = -2
     # puck starts off immediately colliding with table
     deflections = m.find_deflections(table, arm, puck,
-            radius_prop, [])
+            radius_prop)
     assert(len(deflections) == 1)
     # intersect with arm somewhere between table edges
     assert(0 < deflections[0] < table.width)

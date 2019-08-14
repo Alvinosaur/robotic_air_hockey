@@ -232,7 +232,7 @@ def calc_goal_joint_pose(arm, table, goal_joints, goal_loc):
     return omega[0], omega[1], alpha0, alpha1
 
 
-def find_deflections(table, arm, puck_pose, radius_prop, deflections=[]):
+def find_deflections(table, arm, puck_pose, radius_prop):
     """
     Calculates the full trajectory of a puck including all its different
     deflections from wall sides. NOTE: modifies the puck_pose, so need to
@@ -248,41 +248,44 @@ def find_deflections(table, arm, puck_pose, radius_prop, deflections=[]):
     :param deflections: list of tuples that contain the (x, y, vx, vy, time) of
     deflection
     """
-    p_copy = copy.deepcopy(puck_pose)
-    assert(0 <= p_copy.x <= table.width) 
-    reach_radius = arm.link_length * arm.num_links
-    dist_from_base = util.distance(arm.x, arm.y, p_copy.x, p_copy.y)
-    if dist_from_base <= reach_radius:
-        return deflections
-    # (vx < MIN_V) implies puck moving straight down, no wall deflections
-    # (vy < MIN_V) implies puck moving too slowly
-    if abs(p_copy.vx) < MIN_V or abs(p_copy.vy) < MIN_V:  
-        return deflections
+    def deflection_helper(table, arm, puck_pose, radius_prop, deflections=[]):
+        assert(0 <= puck_pose.x <= table.width) 
+        reach_radius = arm.link_length * arm.num_links
+        dist_from_base = util.distance(arm.x, arm.y, puck_pose.x, puck_pose.y)
+        if dist_from_base <= reach_radius:
+            return deflections
+        # (vx < MIN_V) implies puck moving straight down, no wall deflections
+        # (vy < MIN_V) implies puck moving too slowly
+        if abs(puck_pose.vx) < MIN_V or abs(puck_pose.vy) < MIN_V:  
+            return deflections
 
-    if len(deflections) > 0: prev_time = deflections[-1][4]
-    else: prev_time = 0
+        if len(deflections) > 0: prev_time = deflections[-1][4]
+        else: prev_time = 0
 
-    try:
-        collision = vector_circle_intersect(arm, puck_pose, radius_prop)
-        deflections.append([collision.x, collision.y,
+        try:
+            collision = vector_circle_intersect(arm, puck_pose, radius_prop)
+            deflections.append([collision.x, collision.y,
+                                puck_pose.vx, puck_pose.vy,
+                                prev_time + collision.time_to_collision])
+            return deflections
+        
+        except util.NoSolutionError:
+            if puck_pose.vx > 0:  # moving right
+                time_deflection = (table.width - puck_pose.x) / puck_pose.vx
+                puck_pose.x = table.width  # next x position right after deflection
+            else:  # moving left
+                time_deflection = (0 - puck_pose.x) / puck_pose.vx
+                puck_pose.x = 0
+
+            puck_pose.vx *= -1
+            puck_pose.y = puck_pose.y + puck_pose.vy * time_deflection
+            deflections.append([puck_pose.x, puck_pose.y,
                             puck_pose.vx, puck_pose.vy,
-                            prev_time + collision.time_to_collision])
-        return deflections
-    
-    except util.NoSolutionError:
-        if p_copy.vx > 0:  # moving right
-            time_deflection = (table.width - p_copy.x) / p_copy.vx
-            p_copy.x = table.width  # next x position right after deflection
-        else:  # moving left
-            time_deflection = (0 - p_copy.x) / p_copy.vx
-            p_copy.x = 0
+                            prev_time + time_deflection])
+            return deflection_helper(table, arm, puck_pose, radius_prop, deflections)
 
-        p_copy.vx *= -1
-        p_copy.y = p_copy.y + p_copy.vy * time_deflection
-        deflections.append([p_copy.x, p_copy.y,
-                        p_copy.vx, p_copy.vy,
-                        prev_time + time_deflection])
-        return find_deflections(table, arm, p_copy, radius_prop, deflections)
+    p_copy = copy.deepcopy(puck_pose)
+    return deflection_helper(table, arm, p_copy, radius_prop)
 
 
 def linearize_trajectory(puck_pose, deflections):
