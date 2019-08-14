@@ -197,6 +197,17 @@ def calc_goal_joint_pose(arm, table, goal_joints, goal_loc):
     :type: float
 
     """
+    
+    # Always assume we want arm to move at max possible velocity
+    # calculate time necessary for arm to move to intersect location
+    # given arm moves towards goal at max velocity
+    # then compare with time it will take for puck to reach that location
+    # insert this new trajectory motion with a start timestamp inside a queue
+    # when time reaches timestamp, pop from queue and have arm move asap to 
+    # that location
+
+
+
     # Overall angle of velocity, not joint angles
     assert(table.length > goal_loc.y)
     theta_g = math.atan2(table.length - goal_loc.y, table.width/2 - goal_loc.x)
